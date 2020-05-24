@@ -1,5 +1,5 @@
 # #Copyright (C) 2013, Delft University of Technology, Faculty of Electrical Engineering, Mathematics and Computer Science, Network Architectures and Services, Niels van Adrichem
-#
+#verion 2
 # This file is part of OpenNetMon.
 #
 # OpenNetMon is free software: you can redistribute it and/or modify
@@ -329,6 +329,7 @@ class Monitoring (object):
 			#pprint(monitored_paths[path])
 		
 	def _handle_FlowStatsReceived(self, event):
+		print "_handle_FlowStatsReceived function"
 		#stats = flow_stats_to_list(event.stats)
 		##log.debug("Received Flow Stats from %s: %s", util.dpid_to_str(event.connection.dpid), stats)
 		try:
@@ -358,6 +359,7 @@ class Monitoring (object):
 					self.f.write("%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%f\n"%(self.experiment, util.dpid_to_str(dpid), match.nw_src, match.nw_dst, match.nw_proto, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec, cur_throughput))
 					post = {"exp_id": self.experiment, "dpid": util.dpid_to_str(dpid), "srcip": str(match.nw_src), "dstip": str(match.nw_dst), "pkttype": str(match.nw_proto), "pktcount":stat.packet_count, "bytecount": stat.byte_count,"duration": stat.duration_sec, "delpkt": delta_packet_count, "delbytecount": delta_byte_count, "delduration": delta_duration_sec, "throughput": cur_throughput, "date": datetime.utcnow()}
 				#posts = table
+					print post
 					post_id = table.insert_one(post).inserted_id
 					self.f.flush()
 					prev_stats[match][dpid] = stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, cur_throughput
@@ -378,6 +380,7 @@ class Monitoring (object):
 	'''
 
 	def _handle_PortStatsReceived(self, event):
+		print "_handle_PortStatsReceived"
 		dpid = event.connection.dpid
 		try:
 			client=pymongo.MongoClient("155.98.37.89")
@@ -406,6 +409,7 @@ class Monitoring (object):
 				#self.f3.write("PortStatsReceived from %s: %s \t %s \t %s\n"%(dpidToStr(event.connection.dpid), stats, str(delta_rx_packet),str(delta_tx_bytes) ))
 	  			log.debug("Monitoring_Called Statistics\n")
 	  			post = {"exp_id": self.experiment, "dpid": dpidToStr(event.connection.dpid), "RXpackets": str(delta_rx_packet), "RXbytes": str(delta_rx_bytes),"TXpackets": str(delta_tx_packet), "TXbytes": str(delta_tx_bytes),  "portno": stat.port_no , "date": datetime.utcnow()}
+				print "post2:",post
 				post_id = table_port.insert_one(post).inserted_id
 	  			#self.f3.flush()
 	  			prev_stats[dpid][stat.port_no] = stat.rx_bytes, stat.rx_bytes, stat.tx_packets, stat.tx_bytes
