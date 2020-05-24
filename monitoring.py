@@ -283,7 +283,7 @@ class Monitoring (object):
 
 	def _handle_NewFlow(self, event):
 		match = event.match
-		'''
+
 		path = event.prev_path
 		adj = event.adj
 		#log.debug("New flow to monitor %s", str(match))
@@ -307,10 +307,10 @@ class Monitoring (object):
 		#pprint(monitored_paths[path])
 			
 		monitored_pathsByMatch[match] = path
-	'''
+
 	def _handle_FlowRemoved(self, event):
 		match = ofp_match_withHash.from_ofp_match_Superclass(event.ofp.match)
-		'''
+
 		path = monitored_pathsByMatch.pop(match, None)
 		if path is not None:
 			#log.debug("Removing flow")
@@ -328,7 +328,7 @@ class Monitoring (object):
 			
 					sw = path.prev[sw]
 			#pprint(monitored_paths[path])
-		'''
+		
 	def _handle_FlowStatsReceived(self, event):
 		#stats = flow_stats_to_list(event.stats)
 		##log.debug("Received Flow Stats from %s: %s", util.dpid_to_str(event.connection.dpid), stats)
