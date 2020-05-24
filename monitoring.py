@@ -65,7 +65,6 @@ barrier = {}
 The following contains the list of DPIDs for all switches in the network
 
 '''
-switch_dpid = ["22-77-89-c9-39-46","3a-7a-27-30-9e-46", "8a-4b-6a-50-24-49", "c6-08-4b-80-02-43","06-93-3b-c4-95-42","16-93-0c-f4-b7-4e","7e-50-18-13-f8-4b","56-23-ff-96-21-4c","72-82-05-4f-87-42"]
 
 prev_stats = defaultdict(lambda:defaultdict(lambda:None))
 
@@ -333,7 +332,7 @@ class Monitoring (object):
 		#stats = flow_stats_to_list(event.stats)
 		##log.debug("Received Flow Stats from %s: %s", util.dpid_to_str(event.connection.dpid), stats)
 		try:
-			client=pymongo.MongoClient("205.172.170.30")
+			client=pymongo.MongoClient("155.98.37.89")
 			print "Connected successfully!!!"
 		except pymongo.errors.ConnectionFailure, e:
 			print "Could not connect to MongoDB: %s" % e
@@ -367,10 +366,13 @@ class Monitoring (object):
 					self.decreaseTimer = False
 				if abs(cur_throughput - prev_throughput) > .20 * prev_throughput:
 					self.increaseTimer = True
-				
-				##log.debug("Stat switch: %s\tdl_type: %d\tnw_src: %s\tnw_dst: %s\tproto: %s\tsrc_port: %s\t dst_port: %s\tpacketcount: %d\t bytecount: %d\t duration: %d s + %d ns, delta_packetcount: %d, delta_bytecount: %d, delta_duration: %d s + %d ns", util.dpid_to_str(dpid), match.dl_type, match.nw_src, match.nw_dst, match.nw_proto, match.tp_src, match.tp_dst, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec)
+
+			##log.debug("Stat switch: %s\tdl_type: %d\tnw_src: %s\tnw_dst: %s\tproto: %s\tsrc_port: %s\t dst_port: %s\tpacketcount: %d\t bytecount: %d\t duration: %d s + %d ns, delta_packetcount: %d, delta_bytecount: %d, delta_duration: %d s + %d ns", util.dpid_to_str(dpid), match.dl_type, match.nw_src, match.nw_dst, match.nw_proto, match.tp_src, match.tp_dst, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec)
 				#self.f.write("%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"%(self.experiment, util.dpid_to_str(dpid), match.nw_src, match.nw_dst, match.tp_src, match.tp_dst, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec))
-				
+				self.f.flush()
+				prev_stats[match][
+					dpid] = stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, cur_throughput
+
 	'''
 	This event handler pushes the collected port statistics from all switches in the hetwork into the MongoDB archival system
 	'''
@@ -378,14 +380,14 @@ class Monitoring (object):
 	def _handle_PortStatsReceived(self, event):
 		dpid = event.connection.dpid
 		try:
-			client=pymongo.MongoClient("205.172.170.30")
+			client=pymongo.MongoClient("155.98.37.89")
 			print "Connected successfully!!!"
 		except pymongo.errors.ConnectionFailure, e:
 			print "Could not connect to MongoDB: %s" % e
 		db = client.opencdn
 		table_port = db.portmonitor
 		for stat in event.stats:
-			
+
 			#match = ofp_match_withHash.from_ofp_match_Superclass(stat.match)
 			if stat.port_no != 65535:
 			#match = ofp_match_withHash.from_ofp_match_Superclass(stat.match)
