@@ -1,3 +1,54 @@
+# #Copyright (C) 2013, Delft University of Technology, Faculty of Electrical Engineering, Mathematics and Computer Science, Network Architectures and Services, Niels van Adrichem
+#
+# This file is part of OpenNetMon.
+#
+# OpenNetMon is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# OpenNetMon is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with OpenNetMon.  If not, see <http://www.gnu.org/licenses/>.
+
+# Special thanks go to James McCauley and all people connected to the POX project, without their work and provided samples OpenNetMon could not have been created in the way it is now.
+
+"""
+OpenNetMon.Monitoring
+Requires openflow.discovery and opennetmon.forwarding
+"""
+import pymongo
+from pymongo import MongoClient
+from pox.core import core
+import pox.openflow.libopenflow_01 as of
+from pox.lib.revent import *
+
+import pox.lib.util as util
+from pox.lib.recoco import Timer
+
+from forwarding import ofp_match_withHash
+from datetime import datetime
+# from sleepy.mongoose import httpd
+
+from restclient import GET, POST
+import json
+
+from collections import defaultdict
+from collections import namedtuple
+import pox.lib.packet as pkt
+
+# include as part of the betta branch
+from pox.openflow.of_json import *
+# from pox.openflow.of_json import flow_stats_to_list
+import struct
+from pox.lib.addresses import IPAddr, EthAddr
+
+import time
+
 log = core.getLogger()
 switches = {}
 
