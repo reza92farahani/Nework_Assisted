@@ -63,7 +63,8 @@ barrier = {}
 '''
 The following contains the list of DPIDs for all switches in the network
 '''
-switch_dpid = ["ca-80-fa-69-2d-46","e2-d7-68-a5-82-44", "f6-b6-64-5f-68-49", "be-b1-47-d5-fe-4d","0a-47-92-9d-f3-4a","ca-39-37-68-1a-4e","96-d8-6e-4f-76-43","9e-b2-04-07-36-41","66-3a-9f-44-63-4e"]
+switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
+               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
 
 
 prev_stats = defaultdict(lambda: defaultdict(lambda: None))
@@ -332,9 +333,8 @@ class Monitoring(object):
             client = pymongo.MongoClient("155.98.37.89")
             print
             "Connected successfully!!!"
-        except pymongo.errors.ConnectionFailure, e:
-            print
-            "Could not connect to MongoDB: %s" % e
+        except pymongo.errors.ConnectionFailure as e:
+            print ("Could not connect to MongoDB: %s" % e)
         # client
         db = client.opencdn
         table = db.netmonitor
@@ -390,9 +390,8 @@ class Monitoring(object):
             client = pymongo.MongoClient("155.98.37.89")
             print
             "Connected successfully!!!"
-        except pymongo.errors.ConnectionFailure, e:
-            print
-            "Could not connect to MongoDB: %s" % e
+        except pymongo.errors.ConnectionFailure as e:
+            print("Could not connect to MongoDB: %s" % e)
         db = client.opencdn
         table_port = db.portmonitor
         for stat in event.stats:
