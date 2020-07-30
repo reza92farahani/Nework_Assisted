@@ -1,4 +1,6 @@
-
+#
+# This file is part of SABR.
+#
 # OpenNetMon is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -57,8 +59,8 @@ from rpy2.robjects.vectors import IntVector, FloatVector
 switches = {}
 switch_ports = {}
 
-switch_dpid = ["ca-80-fa-69-2d-46","e2-d7-68-a5-82-44", "f6-b6-64-5f-68-49", "be-b1-47-d5-fe-4d","0a-47-92-9d-f3-4a","ca-39-37-68-1a-4e","96-d8-6e-4f-76-43","9e-b2-04-07-36-41","66-3a-9f-44-63-4e"]
-
+switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
+               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
 ct_called = False
 
 s_keys = []
@@ -230,7 +232,7 @@ def _forward_path():
     try:
         client = pymongo.MongoClient()
         print("Connected successfully again!!!")
-    except pymongo.errors.ConnectionFailure, e:
+    except pymongo.errors.ConnectionFailure as e:
         print("Could not connect to MongoDB sadly: %s" % e)
     db = client.opencdn
     table = db.portmonitor
@@ -239,7 +241,7 @@ def _forward_path():
     # cache_ip = ["10.10.10.4","10.10.10.16", "10.10.10.27", "10.10.10.12"]
     best_bw = 100000000000000000.0
     best_serv = 1
-    serv_ip = "10.10.10.2"
+    serv_ip = "10.10.10.4"
     hop_count = s_lsps[s_keys[0][0]][1]
     arima_in = []
     # print("TRAFFIC_MATRIX \n")
@@ -292,8 +294,7 @@ def _forward_path():
                 RO.r('x <- %s' % arima_in.r_repr())
                 print("ARIMA array loaded\n")
                 RO.r('fit <- auto.arima(x)')
-                print
-                "ARIMA Fit returned\n"
+                print("ARIMA Fit returned\n")
                 # RO.r('pdf( "Test%d_%s.pdf" )'%(k,s_keys[i][j]))
                 get_res = RO.r('res <- forecast(fit,h=5)')
                 sum_arima = 0.0
@@ -382,7 +383,7 @@ def get_cache_content(cache_ip_addr):
     try:
         client = pymongo.MongoClient(cache_ip_addr)
         print("Connected successfully again!!!")
-    except pymongo.errors.ConnectionFailure, e:
+    except pymongo.errors.ConnectionFailure as e:
         print("Could not connect to MongoDB sadly: %s" % e)
     db = client.cachestatus
     table = db.cache1
