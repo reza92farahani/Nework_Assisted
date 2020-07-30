@@ -60,7 +60,8 @@ switch_ports = {}
 The following contains the list of DPIDs for all switches in the network
 
 '''
-switch_dpid = ["ca-80-fa-69-2d-46","e2-d7-68-a5-82-44", "f6-b6-64-5f-68-49", "be-b1-47-d5-fe-4d","0a-47-92-9d-f3-4a","ca-39-37-68-1a-4e","96-d8-6e-4f-76-43","9e-b2-04-07-36-41","66-3a-9f-44-63-4e"]
+switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
+               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
 ct_called = False
 
 s_keys = []
@@ -119,27 +120,18 @@ The following contains the list of IP addresses for all cross traffic generators
 
 '''
 cross_list = []
-#serv_list.append("10.10.10.5")
 
 cross_list.append("10.10.10.1")
 cross_list.append("10.10.10.3")
 cross_list.append("10.10.10.22")
 cross_list.append("10.10.10.23")
-# cross_list.append("10.10.10.30")
-# cross_list.append("10.10.10.39")
 cross_list.append("10.10.10.24")
-# cross_list.append("10.10.10.120")
-# cross_list.append("10.10.10.100")
-# cross_list.append("10.10.10.10")
 cross_list.append("10.10.10.6")
-# cross_list.append("10.10.10.7")
-# cross_list.append("10.10.10.8")
-# cross_list.append("10.10.10.9")
+
 
 
 '''
 The following is a list of Client IP addresses for the network
-
 
 '''
 client_list = []
@@ -164,6 +156,7 @@ pos.append(0)
 The following contains the information for all paths to the caches from the client
 The format is:
 (av_bandwidth,no_of_hops,[switch_dpid,out_port,in_port])
+
 Set of clients at switch 3a
 '''
 
@@ -212,26 +205,9 @@ client,server
 
 s_ct_lsps = {}
 s_ct_lsps[("10.10.10.1","10.10.10.23")] = [switch_dpid[0],5,3, switch_dpid[2],2,7, switch_dpid[3],6,3 ]
-# s_ct_lsps[("10.10.10.3","10.10.10.39")] = [switch_dpid[0],1,2, switch_dpid[2],3,6]
-# s_ct_lsps[("10.10.10.22","10.10.10.39")] = [switch_dpid[1],3,5, switch_dpid[2],3,1]
-# s_ct_lsps[("10.10.10.30","10.10.10.23")] = [switch_dpid[2],1,4, switch_dpid[1],7,3]
 s_ct_lsps[("10.10.10.23","10.10.10.24")] = [switch_dpid[5], 3,6, switch_dpid[2],1,2, switch_dpid[1], 3,6, switch_dpid[3], 2,6]
-# s_ct_lsps[("10.10.10.39","10.10.10.100")] = [switch_dpid[2], 7,3, switch_dpid[5],4,6]
 s_ct_lsps[("10.10.10.22","10.10.10.6")] = [switch_dpid[5], 3,5, switch_dpid[2],1,2, switch_dpid[1], 2,6]
-# s_ct_lsps[("10.10.10.30","10.10.10.9")] = [switch_dpid[2], 5,4, switch_dpid[6],3,6]
 
-'''
-s_ct_lsps[("10.10.10.5","10.10.10.25")] = [switch_dpid[1], 5,3, switch_dpid[3],6,9]
-s_ct_lsps[("10.10.10.13","10.10.10.22")] = [switch_dpid[2], 5,2, switch_dpid[6],2,9]
-s_ct_lsps[("10.10.10.4","10.10.10.17")] = [switch_dpid[1], 4,2, switch_dpid[4],1,4]
-s_ct_lsps[("10.10.10.12","10.10.10.28")] = [switch_dpid[2], 4,1, switch_dpid[5],2,1]
-s_ct_lsps2 [0].extend([switch_dpid[0],4,3, switch_dpid[1],3,6])
-s_ct_lsps2 [0].extend([switch_dpid[0], 5,1, switch_dpid[2],2,6])
-s_ct_lsps3 [0].extend([switch_dpid[6], 4,1, switch_dpid[2],3,4,switch_dpid[5],3,4])
-s_ct_lsps2 [0].extend([switch_dpid[0], 1,2, switch_dpid[3],2,3, switch_dpid[2],1,3])
-s_ct_lsps2 [1].extend([switch_dpid[0], 5,2, switch_dpid[1],1,2, switch_dpid[2],3,2, switch_dpid[3],4,2])
-s_ct_lsps2 [2].extend([switch_dpid[0], 1,2, switch_dpid[3],1,3, switch_dpid[4],2,3, switch_dpid[2],5,4,switch_dpid[5],2,1, switch_dpid[6],3,2])
-'''
 
 
 adj = defaultdict(lambda:defaultdict(lambda:None))
@@ -334,7 +310,8 @@ def _forward_path():
     try:
         client=pymongo.MongoClient("155.98.37.89")
         print( "Connected successfully again!!!")
-    except pymongo.errors.ConnectionFailure, e:
+        # except pymongo.errors.ConnectionFailure, e:
+    except pymongo.errors.ConnectionFailure as e:
         print("Could not connect to MongoDB sadly: %s" % e)
     db = client.opencdn
     table = db.portmonitor    
@@ -349,7 +326,7 @@ def _forward_path():
     print("TRAFFIC_MATRIX \n")
     for i in range(len(s_keys)):  
       for j in range (len(s_keys[i])):
-       print s_keys[i][j]
+       print(s_keys[i][j])
        min_bw=0.0
        for k in range (0,len(s_lsps[s_keys[i][j]][2]),3):
           sum_bw=0.0
@@ -583,9 +560,9 @@ def _install_arp(conn_dpid, match, init_event, src, ofp_in_port):
     #if str(match.nw_src) in client_list and str(match.nw_src) not in server_list:
      # if str(match.nw_dst) not in client_list and str(match.nw_dst) not in server_list:
 
-    print "***************Programmed Path*************\n"
+    print("***************Programmed Path*************\n")
     for i in client_list:
-        print i
+        print(i)
     if ((match.nw_dst in client_port.keys() and match.nw_src in server_list) or (match.nw_dst in server_list and match.nw_src in client_port.keys())) :
         if match.nw_dst in server_list:
             serv_index = server_list.index(match.nw_dst)
@@ -717,9 +694,9 @@ def _install_path(conn_dpid, match, init_event, src, ofp_in_port):
     #if str(match.nw_src) in client_list and str(match.nw_src) not in server_list:
      # if str(match.nw_dst) not in client_list and str(match.nw_dst) not in server_list:
 
-    print "***************Programmed Path*************\n"
+    print ("***************Programmed Path*************\n")
     for i in client_list:
-        print i
+        print(i)
     if ((match.nw_dst in client_port.keys() and match.nw_src in server_list) or (match.nw_dst in server_list and match.nw_src in client_port.keys())) :
         if match.nw_dst in server_list:
             serv_index = server_list.index(match.nw_dst)
@@ -962,10 +939,10 @@ class Switch(EventMixin):
             if packet.type == packet.IP_TYPE:
                 log.debug("Switch %s received PacketIn of type 0x%0.4X, received from %s.%s", self, packet.effective_ethertype, poxutil.dpid_to_str(event.dpid), event.port)
                 if packet.find("ipv4").srcip not in server_list and packet.find("ipv4").srcip not in client_list and packet.find("ipv4").srcip not in cross_list: 
-                    print packet.find("ipv4").srcip
+                    print (packet.find("ipv4").srcip)
                 if packet.find("ipv4").dstip not in server_list and packet.find("ipv4").dstip not in client_list and packet.find("ipv4").dstip not in cross_list:
                     client_list.append(packet.find("ipv4").dstip)
-                    print packet.find("ipv4").dstip
+                    print (packet.find("ipv4").dstip)
             dst = mac_learning[packet.dst]
 
             if self.l3_matching == True: #only match on l2-properties, useful when doing experiments with UDP streams as you can insert a flow using ping and then start sending udp.
@@ -1090,7 +1067,7 @@ def launch (l3_matching=False):
     
     #time.sleep(10)
     #post2=gen_random_qual()
-    print "Calling Timer\n"
+    print ("Calling Timer\n")
     #t = Timer(5.0, _forward_path, recurring=True)
     #t.daemon = True
     #t.start()
@@ -1113,3 +1090,4 @@ def launch (l3_matching=False):
     #t.daemon = True
     #t.start()
     
+  
