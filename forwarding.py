@@ -14,1080 +14,452 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with OpenNetMon.  If not, see <http://www.gnu.org/licenses/>.
-from operator import pos
 
 # Special thanks go to James McCauley and all people connected to the POX project, without their work and provided samples OpenNetMon could not have been created in the way it is now.
 
 """
-OpenNetMon.Forwarding
-
-Requires openflow.discovery
+OpenNetMon.Monitoring
+Requires openflow.discovery and opennetmon.forwarding
 """
-
-from pox.lib.revent.revent import EventMixin, Event
-from pox.lib.addresses import IPAddr
-from pox.lib.packet.vlan import vlan
-from pox.lib.packet.ipv4 import ipv4
-from pox.lib.recoco import Timer
-
-
-
-import pox.lib.util as poxutil
-from pox.core import core as poxcore
-
-import pox.openflow.libopenflow_01 as of
-from collections import defaultdict
-import pox.lib.packet as pkt
-
-from collections import namedtuple
-import requests, json
-import urllib
-from datetime import datetime
-import time
-import random
-
-#import threading
-#from multiprocessing import Process
-
 import pymongo
 from pymongo import MongoClient
+from pox.core import core
+import pox.openflow.libopenflow_01 as of
+from pox.lib.revent import *
 
-log = poxcore.getLogger()
+import pox.lib.util as util
+from pox.lib.recoco import Timer
 
+from forwarding import ofp_match_withHash
+from datetime import datetime
+# from sleepy.mongoose import httpd
+
+from restclient import GET, POST
+import json
+
+from collections import defaultdict
+from collections import namedtuple
+import pox.lib.packet as pkt
+
+# include as part of the betta branch
+from pox.openflow.of_json import *
+# from pox.openflow.of_json import flow_stats_to_list
+import struct
+from pox.lib.addresses import IPAddr, EthAddr
+
+import time
+
+log = core.getLogger()
 switches = {}
-switch_ports = {}
+
+monitored_paths = {}
+monitored_pathsById = {}
+monitored_pathsByMatch = {}
+monitored_pathsBySwitch = {}
+
+pathIterator = {}
+barrier = {}
+
 '''
 The following contains the list of DPIDs for all switches in the network
-
 '''
-switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
-               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
-ct_called = False
-
-s_keys = []
-server_list = []
-#Per group (server#/Group#)
-s_keys.append(["s1-c1", "s2-c1", "s3-c1","s4-c1","s5-c1"])
-s_keys.append(["s1-c2", "s2-c2", "s3-c2","s4-c2","s5-c2"])
-s_keys.append(["s1-c3", "s2-c3", "s3-c3","s4-c3","s5-c3"])
-s_keys.append(["s1-c4", "s2-c4", "s3-c4","s4-c4","s5-c4"])
+switch_dpid = ["a2-35-e4-dc-4e-4e","92-2d-43-a4-ff-43", "d6-3e-77-3a-a6-40",
+               "16-03-02-d2-56-42","82-7a-01-c4-38-46","aa-7d-1c-f0-02-40","2e-44-7a-69-f6-43","0e-e7-e9-13-f2-45","12-da-20-28-9e-49"]
 
 
-server_list.append("10.10.10.4")
-server_list.append("10.10.10.12")
-server_list.append("10.10.10.16")
-server_list.append("10.10.10.27")
-server_list.append("10.10.10.1")
- 
-#each group of client has ip address like 71-75, 61-65, 81-85, 91-95
-clientip_list = []
-clientip_list.append("10.10.10.7")
-clientip_list.append("10.10.10.6")
-clientip_list.append("10.10.10.8")
-clientip_list.append("10.10.10.9")
+prev_stats = defaultdict(lambda: defaultdict(lambda: None))
+
+Payload = namedtuple('Payload', 'pathId timeSent')
 
 
-#
-client_port =dict()
+def _install_monitoring_path(prev_path, adj):
+    match = ofp_match_withHash()
+    match.dl_src = struct.pack("!Q", prev_path.src)[2:]  # convert dpid to EthAddr
+    match.dl_dst = struct.pack("!Q", prev_path.dst)[2:]
+    match.dl_type = pkt.ethernet.IP_TYPE
+    match.nw_proto = 253  # Use for experiment and testing
+    match.nw_dst = IPAddr("224.0.0.255")  # IANA Unassigned multicast addres
+    match.nw_src = IPAddr(prev_path.__hash__())  # path hash
 
-client_port["10.10.10.71"]=7
-client_port["10.10.10.72"]=9
-client_port["10.10.10.73"]=8
-client_port["10.10.10.74"]=10
-client_port["10.10.10.75"]=1
-
-client_port["10.10.10.61"]=6
-client_port["10.10.10.62"]=5
-client_port["10.10.10.63"]=4
-client_port["10.10.10.64"]=3
-client_port["10.10.10.65"]=7
-
-client_port["10.10.10.81"]=11
-client_port["10.10.10.82"]=10
-client_port["10.10.10.83"]=9
-client_port["10.10.10.84"]=8
-client_port["10.10.10.85"]=7
-
-client_port["10.10.10.91"]=7
-client_port["10.10.10.92"]=6
-client_port["10.10.10.93"]=3
-client_port["10.10.10.94"]=4
-client_port["10.10.10.95"]=5
-
-
-'''
-The following contains the list of IP addresses for all cross traffic generators in the network
-
-'''
-cross_list = []
-
-cross_list.append("10.10.10.1")
-cross_list.append("10.10.10.3")
-cross_list.append("10.10.10.22")
-cross_list.append("10.10.10.23")
-cross_list.append("10.10.10.24")
-cross_list.append("10.10.10.6")
-
-
-
-'''
-The following is a list of Client IP addresses for the network
-
-'''
-client_list = []
-#client_list.append("10.10.10.61")    
-s_lsps = defaultdict(lambda:defaultdict(lambda:None))
-
-
-arima_ctr=[]
-arima_ctr.append(0)
-arima_ctr.append(0)
-arima_ctr.append(0)
-arima_matrix = [[0.0 for x in range(850)] for x in range(3)]
-ct_found = []
-ct_found.append(0)
-ct_found.append(0)
-ct_found.append(0)
-pos = []
-pos.append(0)
-pos.append(0)
-pos.append(0)
-'''
-The following contains the information for all paths to the caches from the client
-The format is:
-(av_bandwidth,no_of_hops,[switch_dpid,out_port,in_port])
-
-Set of clients at switch 3a
-'''
-
-
-s_lsps[s_keys[0][0]]=([0,2,[switch_dpid[3],6,0, switch_dpid[1],4,3]])
-s_lsps[s_keys[0][1]]=([0,3,[switch_dpid[3],6,0, switch_dpid[1],6,3, switch_dpid[2],5,1]])
-s_lsps[s_keys[0][2]]=([0,2,[switch_dpid[3],11,0, switch_dpid[4],3,6]])
-s_lsps[s_keys[0][3]]=([0,4,[switch_dpid[3],6,0, switch_dpid[1],6,3, switch_dpid[2],6,1,switch_dpid[6],4,5]])
-s_lsps[s_keys[0][4]]=([0,3,[switch_dpid[3],6,0, switch_dpid[1],7,3, switch_dpid[0],3,4]])
-'''
-Set of clients at switch 4a
-'''
-
-s_lsps[s_keys[1][0]]=([0,3,[switch_dpid[7],2,0, switch_dpid[3],6,5,switch_dpid[1],4,3]])
-s_lsps[s_keys[1][1]]=([0,4,[switch_dpid[7],1,0, switch_dpid[4],5,1, switch_dpid[1],6,5,switch_dpid[2],5,1]])
-s_lsps[s_keys[1][2]]=([0,2,[switch_dpid[7],1,0, switch_dpid[4],3,1]])
-s_lsps[s_keys[1][3]]=([0,5,[switch_dpid[7],1,0, switch_dpid[4],5,1, switch_dpid[1],6,5,switch_dpid[2],6,1,switch_dpid[6],4,5]])
-s_lsps[s_keys[1][4]]=([0,4,[switch_dpid[7],2,0, switch_dpid[3],6,5, switch_dpid[1],7,3,switch_dpid[0],3,4]])
-
-
-'''
-Set of clients at switch 3c
-'''
-s_lsps[s_keys[2][0]]=([0,3,[switch_dpid[5],3,0, switch_dpid[2],1,2, switch_dpid[1],4,6]])
-s_lsps[s_keys[2][1]]=([0,2,[switch_dpid[5],3,0, switch_dpid[2],5,2]])
-s_lsps[s_keys[2][2]]=([0,4,[switch_dpid[5],3,0, switch_dpid[2],1,2, switch_dpid[1],5,6, switch_dpid[4],3,5]])
-s_lsps[s_keys[2][3]]=([0,2,[switch_dpid[5],1,0, switch_dpid[6],4,2]])
-s_lsps[s_keys[2][4]]=([0,3,[switch_dpid[5],3,0, switch_dpid[2],7,2, switch_dpid[0],3,5]])
-
-'''
-Set of clients at switch 4b
-'''
-s_lsps[s_keys[3][0]]=([0,4,[switch_dpid[8],2,0, switch_dpid[6],5,1,switch_dpid[2],1,6,switch_dpid[1],4,6]])
-s_lsps[s_keys[3][1]]=([0,3,[switch_dpid[8],1,0, switch_dpid[5],3,2, switch_dpid[2],5,2]])
-s_lsps[s_keys[3][2]]=([0,5,[switch_dpid[8],2,0, switch_dpid[6],5,1, switch_dpid[2],1,6, switch_dpid[1],5,6, switch_dpid[4],5,3]])
-s_lsps[s_keys[3][3]]=([0,2,[switch_dpid[8],2,0, switch_dpid[6],4,1]])
-s_lsps[s_keys[3][4]]=([0,4,[switch_dpid[8],1,0, switch_dpid[5],3,2, switch_dpid[2],7,2,switch_dpid[0],3,5]])
-
-
-'''
-The following contains the information for all cross traffic paths in the network
-The format is:
-(av_bandwidth,no_of_hops,[switch_dpid,out_port,in_port])
-client,server
-'''
-
-s_ct_lsps = {}
-s_ct_lsps[("10.10.10.1","10.10.10.23")] = [switch_dpid[0],5,3, switch_dpid[2],2,7, switch_dpid[3],6,3 ]
-s_ct_lsps[("10.10.10.23","10.10.10.24")] = [switch_dpid[5], 3,6, switch_dpid[2],1,2, switch_dpid[1], 3,6, switch_dpid[3], 2,6]
-s_ct_lsps[("10.10.10.22","10.10.10.6")] = [switch_dpid[5], 3,5, switch_dpid[2],1,2, switch_dpid[1], 2,6]
-
-
-
-adj = defaultdict(lambda:defaultdict(lambda:None))
-node_wt = defaultdict(lambda:defaultdict(lambda:None)) 
-mac_learning = {}
-
-
-class ofp_match_withHash(of.ofp_match):
-    ##Our additions to enable indexing by match specifications
-    @classmethod
-    def from_ofp_match_Superclass(cls, other):    
-        match = cls()
-        
-        match.wildcards = other.wildcards
-        match.in_port = other.in_port
-        match.dl_src = other.dl_src
-        match.dl_dst = other.dl_dst
-        match.dl_vlan = other.dl_vlan
-        match.dl_vlan_pcp = other.dl_vlan_pcp
-        match.dl_type = other.dl_type
-        match.nw_tos = other.nw_tos
-        match.nw_proto = other.nw_proto
-        match.nw_src = other.nw_src
-        match.nw_dst = other.nw_dst
-        match.tp_src = other.tp_src
-        match.tp_dst = other.tp_dst
-        return match
-        
-    def __hash__(self):
-        return hash((self.wildcards, self.in_port, self.dl_src, self.dl_dst, self.dl_vlan, self.dl_vlan_pcp, self.dl_type, self.nw_tos, self.nw_proto, self.nw_src, self.nw_dst, self.tp_src, self.tp_dst))
-
-class Path(object):
-    def __init__(self, src, dst, prev, first_port):
-        self.src = src
-        self.dst = dst
-        self.prev = prev
-        self.first_port = first_port
-    
-    def __repr__(self):
-        ret = poxutil.dpid_to_str(self.dst)
-        u = self.prev[self.dst]
-        while(u != None):
-            ret = poxutil.dpid_to_str(u) + "->" + ret
-            u = self.prev[u]
-        
-        return ret            
-    
-    def _tuple_me(self):
-        
-        list = [self.dst,]
-        u = self.prev[self.dst]
-        while u != None:
-            list.append(u)
-            u = self.prev[u]
-        ##log.debug("List path: %s", list)
-        ##log.debug("Tuple path: %s", tuple(list))
-        return tuple(list)
-    
-    def __hash__(self):
-        return hash(self._tuple_me())
-    
-    def __eq__(self, other):
-        return self._tuple_me() == other._tuple_me()
-'''
-The following API programs static flows for the cross traffic paths in the network.
-'''
-   
-
-
-def gen_random_qual():
-    seg_list = []
-    new_dict = {}
-    post = {}
-    for i in range (1,300):
-        new = []
-        for j in range (1,12):
-        #x is result of coin flip
-            x = random.randint(0,1)
-            new.append(j)
-        make_key = str(i)
-        new_dict.update({make_key:new})
-        seg_list.append(new)
-    post.update({"qualities":new_dict})
-    return post
-
-'''
-The following API implements SABR processing, i.e,computes instantaneous bottleneck bandwidth 
-'''
-def _forward_path():
-    #RO.r('library(forecast)')
-    #t = Timer(5.0, _forward_path)
-    #t.start()
-    print("--------------------FORWARDPATH-------------------")
-    start_time=time.time()
-    #t = Timer(5, _forward_path)
-    #t = Timer(5.0, _forward_path)
-    #t.daemon = True
-    #t.start()
-    #print("ROUTING: Thread_count %d"%threading.activeCount())
-    try:
-        client=pymongo.MongoClient("155.98.37.89")
-        print( "Connected successfully again!!!")
-        # except pymongo.errors.ConnectionFailure, e:
-    except pymongo.errors.ConnectionFailure as e:
-        print("Could not connect to MongoDB sadly: %s" % e)
-    db = client.opencdn
-    table = db.portmonitor    
-    table1 = db.serv_bandwidth
-    best_bw = 100000000000000000.0
-    best_serv = 1
-    serv_ip = "10.10.10.4"
-    serv_index=0
-    client_index=0
-    hop_count = s_lsps[s_keys[0][0]][1]
-    arima_in = []
-    print("TRAFFIC_MATRIX \n")
-    for i in range(len(s_keys)):  
-      for j in range (len(s_keys[i])):
-       print(s_keys[i][j])
-       min_bw=0.0
-       for k in range (0,len(s_lsps[s_keys[i][j]][2]),3):
-          sum_bw=0.0
-          #arima_avg=0.0
-          for res in table.find({"dpid": str(s_lsps[s_keys[i][j]][2][k]) , "portno": s_lsps[s_keys[i][j]][2][k+2]}).sort([("_id", pymongo.DESCENDING)]).limit(1):
-              #print("MONGO: Value of Search Result:\t")
-              #print(res)
-              #stat_query = "{\"dpid\":\"" + str(s_lsps[s_keys[i][j]][2][k]) + "\",\"portno\":"+ str(s_lsps[s_keys[i][j]][2][k+1])+"}"
-              #opencdn_url = "http://localhost:27080/opencdn/portmonitor/_find?criteria="+urllib.quote(stat_query)+";batch_size=1"
-          
-              ##print ("ROUTING PYMONGO URL %s", res)
-              #stat_resp = requests.get(res)
-              ##print("ROUTING stat_query JSON URL %s", stat_resp)
-              #s_resp =stat_resp.json()\
-              print("ROUTING stat_query JSON URL %s", res)
-              if len(res)>0:
-                       sum_bw=int(res['TXbytes'])
-          #avg_bw=sum_bw/2.0             
-          min_bw=max(sum_bw,min_bw)             
-      post = {"server_ip": server_list[j],"client_ip": clientip_list[i], "min_bw": (min_bw) , "hop_count": hop_count,  "date": datetime.utcnow()}
-       #post.update(post3)
-      post_id = table1.insert_one(post).inserted_id           
-      s_lsps[s_keys[i][j]][0]= min_bw         
-          #print("ROUTING MiNBW %d", min_bw)
-      '''   
-       if best_bw > min_bw:
-        best_bw = min_bw
-        best_serv=i
-       elif best_bw == min_bw:  
-        if hop_count>= s_lsps[s_keys[i][j]][1]:
-            best_serv=i
-            hop_count = s_lsps[s_keys[i][j]][1]
-        '''
-      #print("ROUTING: server is %s and congestion bandwidth is %d", s_keys[i][j], min_bw)                 
-      '''
-      if best_serv == 0:
-        serv_ip = "10.10.10.3"
-      elif best_serv == 1:
-        serv_ip = "10.10.10.8"
-      elif best_serv == 2:
-        se
-       
-       rv_ip = "10.10.10.16"
-      '''
-      
-       
-      '''
-       if s_keys[i][j]=="10.10.10.3": 
-        post.update(post1)
-      elif s_keys[i][j] == "10.10.10.8":
-        post.update(post2)  
-      else:
-        post.update(post3)
-      '''
-      #post.update(gen_random_qual())
-      
-      ##print("Best server is %s and available bandwidth is %d", serv_ip, best_bw)    
-      #k=k+1
-      #print("ROUTING stat_query WEIGHT %d", min_bw)
-      
-       #if best_bw > min_bw:
-        #   best_bw = min_bw
-         #  best_serv = i
-         
-    end_time = time.time()
-
-    #print("ROUTING: %f", (end_time-start_time))
-    #t2 = Timer(5.0, _forward_path)
-    ''' 
-    if (end_time-start_time) < 5.0:
-        time.sleep(5.0-(end_time-start_time))
-        #t2 = Timer(5.0, _forward_path)
-        #_forward_path
-        #t2 = Timer((end_time-start_time), _forward_path) 
-    else:
-        print("ROUTING: Entered Recursive call-----------------------------------------------------------\n")
-        
-        #t2 = Timer(5.0, _forward_path)
-        #t2.start()
-        
-        print("ROUTING: Called Timer-----------------------------------------------------------\n")
-        
-    _forward_path
-    '''
-'''
-The following API programs client flows
-'''
-def _get_path(src, dst):
-    #Bellman-Ford algorithm
-    keys = switches.keys()
-    distance = {}
-    previous = {}
-    
-    for dpid in keys:
-        distance[dpid] = float("+inf")
-        previous[dpid] = None
-
-    distance[src] = 0
-    log.debug("Graph weights randomly assigned:\n")
-    for i in range(len(keys)-1):
-        for u in adj.keys(): #nested dict
-            for v in adj[u].keys():
-                w = node_wt[u][v] = random.randrange(1,10)
-                log.debug("%d\n"%node_wt[u][v])
-                if distance[u] + w < distance[v]:
-                    distance[v] = distance[u] + w
-                    previous[v] = u 
-
-    for u in adj.keys(): #nested dict
-        for v in adj[u].keys():
-            w = node_wt[u][v]
-            if distance[u] + w < distance[v]:
-                log.error("Graph contains a negative-weight cycle")
-                return None
-    
-    first_port = None
-    v = dst
-    u = previous[v]
-    
-    while u is not None:
-        if u == src:
-            first_port = adj[u][v]
-        
-        
-        v = u
-        u = previous[v]
-        
-                
-    return Path(src, dst, previous, first_port)  #path
-def _install_shortestpath(match):
-    try:
-        cross_path=s_ct_lsps[(str(match.nw_src),str(match.nw_dst))]
-        src = match.nw_src
-        dst = match.nw_dst
-    except KeyError:
-        cross_path=s_ct_lsps[(str(match.nw_dst),str(match.nw_src))]
-        src = match.nw_dst
-        dst = match.nw_src
-    for i in range(0,len(cross_path)-2,3):
-        msg = of.ofp_flow_mod()
-
-        msg.match = of.ofp_match(in_port=match.in_port, dl_type =0x0800, nw_src = src, nw_dst = dst)
-        msg.idle_timeout = 500
-        msg.flags = of.OFPFF_SEND_FLOW_REM    
-        msg.actions.append(of.ofp_action_output(port = cross_path[i+1]))
-        log.debug("CROSS_TRAFFIC: Installing forward from switch %s to output port %s", cross_path[i], cross_path[i+1])
-        poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cross_path[i]),msg)
-        
-        rev_msg = of.ofp_flow_mod()
-
-        rev_msg.match = of.ofp_match(in_port=cross_path[i+1], dl_type =0x0800, nw_src = dst, nw_dst = src)
-        rev_msg.idle_timeout = 500
-        rev_msg.flags = of.OFPFF_SEND_FLOW_REM    
-        rev_msg.actions.append(of.ofp_action_output(port = cross_path[i+2]))
-        log.debug("CROSS_TRAFFIC: Installing reverse from switch %s to output port %s", cross_path[i], cross_path[i+2])
-        poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cross_path[i]),rev_msg)
-        
-        '''
     dst_sw = prev_path.dst
     cur_sw = prev_path.dst
-    dst_pck = match.dl_dst
-    
+
     msg = of.ofp_flow_mod()
-    #msg.match = match
-    
-    msg.match = of.ofp_match(in_port=match.in_port, dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
-    msg.idle_timeout = 500
-    msg.flags = of.OFPFF_SEND_FLOW_REM    
-    msg.actions.append(of.ofp_action_output(port = mac_learning[dst_pck].port))
-    log.debug("Installing forward from switch %s to output port %s", poxutil.dpid_to_str(cur_sw), mac_learning[dst_pck].port)
+    msg.match = match
+    msg.idle_timeout = 30
+    # msg.flags = of.OFPFF_SEND_FLOW_REM
+    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+    # log.debug("Installing monitoring forward from switch %s to controller port", util.dpid_to_str(cur_sw))
     switches[dst_sw].connection.send(msg)
-    
+
     next_sw = cur_sw
     cur_sw = prev_path.prev[next_sw]
-    while cur_sw is not None: #for switch in path.keys():
+    while cur_sw is not None:  # for switch in path.keys():
         msg = of.ofp_flow_mod()
-        #msg.match = match
-        msg.match = of.ofp_match(in_port = match.in_port,dl_type =0x0800,nw_src = match.nw_src, nw_dst = match.nw_dst)
-        msg.idle_timeout = 500
-        msg.flags = of.OFPFF_SEND_FLOW_REM
-        log.debug("Installing forward from switch %s to switch %s output port %s", poxutil.dpid_to_str(cur_sw), poxutil.dpid_to_str(next_sw), adj[cur_sw][next_sw])
-        msg.actions.append(of.ofp_action_output(port = adj[cur_sw][next_sw]))
+        msg.match = match
+        msg.idle_timeout = 10
+        # msg.flags = of.OFPFF_SEND_FLOW_REM
+        # log.debug("Installing monitoring forward from switch %s to switch %s output port %s", util.dpid_to_str(cur_sw), util.dpid_to_str(next_sw), adj[cur_sw][next_sw])
+        msg.actions.append(of.ofp_action_output(port=adj[cur_sw][next_sw]))
         switches[cur_sw].connection.send(msg)
         next_sw = cur_sw
-        
+
         cur_sw = prev_path.prev[next_sw]
-        '''
-        
-def _install_shortestpath_arp(match):
-    try:
-        cross_path=s_ct_lsps[(str(match.nw_src),str(match.nw_dst))]
-        src = match.nw_src
-        dst = match.nw_dst
-    except KeyError:
-        cross_path=s_ct_lsps[(str(match.nw_dst),str(match.nw_src))]
-        src = match.nw_dst
-        dst = match.nw_src
-    for i in range(0,len(cross_path)-2,3):
-        msg = of.ofp_flow_mod()
-
-        msg.match = of.ofp_match(in_port=match.in_port, dl_type =0x0806, nw_src = src, nw_dst = dst)
-        msg.idle_timeout = 500
-        msg.flags = of.OFPFF_SEND_FLOW_REM    
-        msg.actions.append(of.ofp_action_output(port = cross_path[i+1]))
-        log.debug("CROSS_TRAFFIC: Installing forward from switch %s to output port %s", cross_path[i], cross_path[i+1])
-        poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cross_path[i]),msg)
-        
-        rev_msg = of.ofp_flow_mod()
-
-        rev_msg.match = of.ofp_match(in_port=cross_path[i+1], dl_type =0x0806, nw_src = dst, nw_dst = src)
-        rev_msg.idle_timeout = 500
-        rev_msg.flags = of.OFPFF_SEND_FLOW_REM    
-        rev_msg.actions.append(of.ofp_action_output(port = cross_path[i+2]))
-        log.debug("CROSS_TRAFFIC: Installing reverse from switch %s to output port %s", cross_path[i], cross_path[i+2])
-        poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cross_path[i]),rev_msg)
-
-def _install_arp(conn_dpid, match, init_event, src, ofp_in_port):
-    global ct_called
-    #log.debug("CROSSTRAFFIC: check port %d", match.tp_dst)
-    #log.debug("CROSSTRAFFIC_MATCH: check port %s", match)
-    
-    #if match.nw_dst == "10.10.10.9" and match.nw_src== "10.10.10.5" and match.nw_src == "10.10.10.4" or match.nw_src == "10.10.10.6" or match.nw_src == "10.10.10.11" or match.nw_src == "10.10.10.7":
-    if match.nw_dst in cross_list and match.nw_src in cross_list:
-            _install_shortestpath_arp(match)
-            log.debug("Calling Cross Traffic %s"%match.nw_src)
-            ct_called = True
-            return 0
-    
-    #best_bw=0
-    log.debug("****************SOURCE %s and DESTINATION %s******************\n"%(match.nw_src,match.nw_dst))
-    #if str(match.nw_src) in client_list and str(match.nw_src) not in server_list:
-     # if str(match.nw_dst) not in client_list and str(match.nw_dst) not in server_list:
-
-    print("***************Programmed Path*************\n")
-    for i in client_list:
-        print(i)
-    if ((match.nw_dst in client_port.keys() and match.nw_src in server_list) or (match.nw_dst in server_list and match.nw_src in client_port.keys())) :
-        if match.nw_dst in server_list:
-            serv_index = server_list.index(match.nw_dst)
-            #print server_list[serv_index]
-        elif match.nw_dst in client_port.keys():
-            client_index = clientip_list.index((str(match.nw_dst)[0:10]))
-            client_ip_new = str(match.nw_dst)
-            #print clientip_list[client_index]
-        if match.nw_src in server_list:
-            serv_index = server_list.index(match.nw_src)
-            #print server_list[serv_index]
-        elif match.nw_src in client_port.keys():
-            client_index = clientip_list.index((str(match.nw_src)[0:10]))
-            client_ip_new = str(match.nw_src)
-            #print clientip_list[client_index]
-        log.debug("Client Index is %d and Server Index is %d and CLient IP %s",client_index,serv_index,client_ip_new)
-        best_path = s_keys[client_index][serv_index]
-    best_bw = s_lsps[s_keys[client_index][serv_index]][0]
-    packet = init_event.parsed
-    first_in  = init_event.port
-    #s_lsps[best_path][2][2] = client_port[client_ip_new]
-    for i in range(0,len(s_lsps[best_path][2])-2,3): #for switch in path.keys():  
-        #log.debug("INSTALLING ARP: VALUE OF i %d and Length %d", i, len(s_lsps[best_path][2]))
-        cur_sw = s_lsps[best_path][2][i]
 
 
-        #rev_msg = of.ofp_flow_mod()
-        '''
-        rev_msg.match = match
-        rev_msg.match.nw_dst, rev_msg.match.nw_src = rev_msg.match.nw_src , rev_msg.match.nw_dst
-        rev_msg.match.dl_dst, rev_msg.match.dl_src = rev_msg.match.dl_src, rev_msg.match.dl_dst
-        rev_msg.match.tp_src, rev_msg.match.tp_dst = rev_msg.match.tp_dst, rev_msg.match.tp_src
-        '''
-        '''
-        if i==0:
-            rev_port = first_in
-            
-            src_sw = "client"
-            dst_sw = s_lsps[best_path][2][i]
-            msg.match = of.ofp_match(in_port = first_in, dl_type=0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst, tp_src = match.tp_src, tp_dst= match.tp_dst, nw_proto = match.nw_proto)
-        
-        else:
-        '''
-        rev_port = s_lsps[best_path][2][i+2]
-        #msg.in_port = s_lsps[best_path][2][i+2]
-        src_sw = s_lsps[best_path][2][i]
-        if i<(len(s_lsps[best_path][2])-3):
-            dst_sw = s_lsps[best_path][2][i+3]
-        else:
-            dst_sw ="last"
-        if i==0:
-                cl_port=client_port[client_ip_new]
-        else:
-                cl_port=s_lsps[best_path][2][i+2]
-        log.debug("********ARP SRC: %s and ARP DST********** %s",str(match.nw_src),str(match.nw_dst))
-        if str(match.nw_src) in client_port.keys():
-                msg = of.ofp_flow_mod()
-                msg.idle_timeout =10
-                msg.flags = of.OFPFF_SEND_FLOW_REM
-                msg.match = of.ofp_match(in_port = cl_port,dl_type =0x0806, nw_src = match.nw_src, nw_dst = match.nw_dst)
-                log.debug("Installing Forward from switch %s to switch %s: output port %s", src_sw, dst_sw, s_lsps[best_path][2][i+1])
-                msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),msg)
-                #msg_cl = of.ofp_flow_mod()
-                #msg.idle_timeout =10
-                #msg.flags = of.OFPFF_SEND_FLOW_REM
-                #msg.match = of.ofp_match(in_port = cl_port,dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
-                #log.debug("Installing Forward from switch %s to switch %s: output port %s", src_sw, dst_sw, s_lsps[best_path][2][i+1])
-                #msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                #rev_msg.match.in_port = s_lsps[best_path][2][i+1]
-        #if src_sw != "client":
-                '''
-                rev_msg = of.ofp_flow_mod()
-                rev_msg.idle_timeout = 10
-                rev_msg.flags = of.OFPFF_SEND_FLOW_REM
-                rev_msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0806, nw_src = match.nw_dst, nw_dst = match.nw_src)
+class Monitoring(object):
 
-                rev_msg.out_port = cl_port
-                log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, rev_msg.match.in_port,rev_msg.out_port)
-                rev_msg.actions.append(of.ofp_action_output(port = cl_port))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-                log.debug("*************ARP CLIENT FLOW: DPID OF CURRENT SWITCH*************%s",cur_sw)
-                '''
-        elif str(match.nw_dst) in client_port.keys():
-                msg = of.ofp_flow_mod()
-                msg.idle_timeout = 10
-                msg.flags = of.OFPFF_SEND_FLOW_REM
-                msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0806, nw_src = match.nw_src, nw_dst = match.nw_dst)
+    def _timer_MonitorPaths(self):
+        # log.debug("Monitoring paths %s", str(datetime.now()))
 
-                msg.out_port = cl_port
-                log.debug("Installing Reverse1 from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, msg.match.in_port,msg.out_port)
-                msg.actions.append(of.ofp_action_output(port = cl_port))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),msg)
-                '''
-                rev_msg = of.ofp_flow_mod()
-                rev_msg.idle_timeout = 10
-                rev_msg.flags = of.OFPFF_SEND_FLOW_REM
-                rev_msg.match = of.ofp_match(in_port = cl_port,dl_type =0x0806, nw_src = match.nw_dst, nw_dst = match.nw_src)
+        def AdaptiveTimer():
+            changed = False
+            # Increase or decrease the timers based on the throughput results measured based on the flowstats reply
+            if (self.increaseTimer == True):
+                self.t._interval /= 2
+                changed = True
+            elif (self.decreaseTimer == True):
+                self.t._interval *= 1.125
+                changed = True
 
-                rev_msg.out_port = s_lsps[best_path][2][i+1]
-                log.debug("Installing Reverse2 from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, rev_msg.match.in_port,rev_msg.out_port)
-                rev_msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-                log.debug("*************ARP CLIENT FLOW: DPID OF CURRENT SWITCH*************%s",cur_sw)
-                '''
-                #rev_msg = of.ofp_flow_mod()
-                #rev_msg.idle_timeout = 10
-                #rev_msg.flags = of.OFPFF_SEND_FLOW_REM
-                #rev_msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
+            # maximize the interval
+            if self.t._interval > 60:
+                self.t._interval = 60
 
-                #rev_msg.out_port = rev_port
-                #log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, rev_msg.match.in_port,rev_msg.out_port)
-                #rev_msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+2]))
-                #poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-def _install_path(conn_dpid, match, init_event, src, ofp_in_port):
-    global ct_called
-    #log.debug("CROSSTRAFFIC: check port %d", match.tp_dst)
-    #log.debug("CROSSTRAFFIC_MATCH: check port %s", match)
-    
-    #if match.nw_dst != "10.10.10.3" and match.nw_src== "10.10.10.2" and match.nw_src == "10.10.10.4" or match.nw_src == "10.10.10.6" or match.nw_src == "10.10.10.11" or match.nw_src == "10.10.10.7":
-    if match.nw_dst in cross_list and match.nw_src in cross_list:
-            _install_shortestpath(match)
-            log.debug("Calling Cross Traffic %s"%match.nw_src)
-            ct_called = True
-            return 0
-    
-    #best_bw=0
-    log.debug("****************SOURCE %s and DESTINATION %s******************\n"%(match.nw_src,match.nw_dst))
-    #if str(match.nw_src) in client_list and str(match.nw_src) not in server_list:
-     # if str(match.nw_dst) not in client_list and str(match.nw_dst) not in server_list:
+            # minimize the interval
+            if self.t._interval < 1:
+                self.t._interval = 1
 
-    print ("***************Programmed Path*************\n")
-    for i in client_list:
-        print(i)
-    if ((match.nw_dst in client_port.keys() and match.nw_src in server_list) or (match.nw_dst in server_list and match.nw_src in client_port.keys())) :
-        if match.nw_dst in server_list:
-            serv_index = server_list.index(match.nw_dst)
-            #print server_list[serv_index]
-        elif match.nw_dst in client_port.keys():
-            client_index = clientip_list.index((str(match.nw_dst)[0:10]))
-            client_ip_new = str(match.nw_dst)
-            #print clientip_list[client_index]
-        if match.nw_src in server_list:
-            serv_index = server_list.index(match.nw_src)
-            #print server_list[serv_index]
-        elif match.nw_src in client_port.keys():
-            client_index = clientip_list.index((str(match.nw_src)[0:10]))
-            client_ip_new = str(match.nw_src)
-            #print clientip_list[client_index]
-        log.debug("Client Index is %d and Server Index is %d and CLient IP %s",client_index,serv_index,client_ip_new)
-        best_path = s_keys[client_index][serv_index]
-    best_bw = s_lsps[s_keys[client_index][serv_index]][0]
-    '''   
-    for j in range (len(s_keys[client_index])):
-       print s_keys[i][j] 
-       for k in range (len(s_lsps[s_keys[i][j]][2])):
-        print s_lsps[s_keys[i][j]][0]
-        if best_bw > s_lsps[s_keys[i][j]][0]:
-            best_path, best_bw = s_keys[i][j], s_lsps[s_keys[i][j]][0]
-       log.debug("BESTPATH: %s and BESTBW = %d", best_path, best_bw)
-    '''
-    packet = init_event.parsed
-    first_in  = init_event.port
-    #s_lsps[best_path][2][2] = client_port[client_ip_new]
-    for i in range(0,len(s_lsps[best_path][2])-2,3): #for switch in path.keys():  
-        #log.debug("INSTALLING : VALUE OF i %d and Length %d", i, len(s_lsps[best_path][2]))
-        cur_sw = s_lsps[best_path][2][i]
+            # update next timer if, and only if, the timer has changed
+            if changed == True:
+                self.t._next = time.time() + self.t._interval
 
+            # Reset input from received flowstats
+            self.increaseTimer = False
+            self.decreaseTimer = True
 
-        #rev_msg = of.ofp_flow_mod()
-        '''
-        rev_msg.match = match
-        rev_msg.match.nw_dst, rev_msg.match.nw_src = rev_msg.match.nw_src , rev_msg.match.nw_dst
-        rev_msg.match.dl_dst, rev_msg.match.dl_src = rev_msg.match.dl_src, rev_msg.match.dl_dst
-        rev_msg.match.tp_src, rev_msg.match.tp_dst = rev_msg.match.tp_dst, rev_msg.match.tp_src
-        '''
-        '''
-        if i==0:
-            rev_port = first_in
-            
-            src_sw = "client"
-            dst_sw = s_lsps[best_path][2][i]
-            msg.match = of.ofp_match(in_port = first_in, dl_type=0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst, tp_src = match.tp_src, tp_dst= match.tp_dst, nw_proto = match.nw_proto)
-        
-        else:
-        '''
-        #msg.in_port = s_lsps[best_path][2][i+2]
-        src_sw = s_lsps[best_path][2][i]
-        if i<(len(s_lsps[best_path][2])-3):
-            dst_sw = s_lsps[best_path][2][i+3]
-        else:
-            dst_sw ="last"
-        if i==0:
-                cl_port=client_port[client_ip_new]
-        else:
-                cl_port=s_lsps[best_path][2][i+2]
-        if str(match.nw_src) in client_port.keys():
-                msg = of.ofp_flow_mod()
-                msg.idle_timeout =10
-                msg.flags = of.OFPFF_SEND_FLOW_REM
-                msg.match = of.ofp_match(in_port = cl_port,dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
-                log.debug("Installing Forward from switch %s to switch %s: output port %s", src_sw, dst_sw, s_lsps[best_path][2][i+1])
-                msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                #rev_msg.match.in_port = s_lsps[best_path][2][i+1]
-        #if src_sw != "client":
-                log.debug("*************CLIENT FLOW: DPID OF CURRENT SWITCH*************%s",cur_sw)
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),msg)
-                '''
-                rev_msg = of.ofp_flow_mod()
-                rev_msg.idle_timeout = 10
-                rev_msg.flags = of.OFPFF_SEND_FLOW_REM
-                rev_msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0800, nw_src = match.nw_dst, nw_dst = match.nw_src)
+        def RoundRobin():
+            pathRead = {}
+            for p in monitored_paths:
+                pathRead[p] = False
 
-                rev_msg.out_port = cl_port
-                log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, msg.match.in_port,msg.out_port)
-                rev_msg.actions.append(of.ofp_action_output(port = cl_port))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-                '''
-        elif str(match.nw_dst) in client_port.keys():
-                msg = of.ofp_flow_mod()
-                msg.idle_timeout = 10
-                msg.flags = of.OFPFF_SEND_FLOW_REM
-                msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
+            for p in monitored_paths:  # Walk through all distinct paths, not even flows
+                if pathRead[p] != True:
 
-                msg.out_port =cl_port
-                log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, msg.match.in_port, msg.out_port)
-                msg.actions.append(of.ofp_action_output(port = cl_port))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),msg)
-                '''
-                rev_msg = of.ofp_flow_mod()
-                rev_msg.idle_timeout = 10
-                rev_msg.flags = of.OFPFF_SEND_FLOW_REM
-                rev_msg.match = of.ofp_match(in_port = cl_port,dl_type =0x0800, nw_src = match.nw_dst, nw_dst = match.nw_src)
-
-                rev_msg.out_port = s_lsps[best_path][2][i+1]
-                log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, msg.match.in_port,msg.out_port)
-                rev_msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-                '''
-        '''
-        #elif str(match.nw_src) in server_list:
-                msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+1],dl_type =0x0800, nw_src = match.nw_src, nw_dst = match.nw_dst)
-                log.debug("Installing Forward from switch %s to switch %s: output port %s", src_sw, dst_sw, s_lsps[best_path][2][i+2])
-                msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+2]))
-                #rev_msg.match.in_port = s_lsps[best_path][2][i+1]
-        #if src_sw != "client":
-                log.debug("*************SERVER FLOW: DPID OF CURRENT SWITCH*************%s",cur_sw)
-                poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),msg)
-                
-                #rev_msg.match = of.ofp_match(in_port = s_lsps[best_path][2][i+2] ,dl_type =0x0800, nw_src = match.nw_dst, nw_dst = match.nw_src, nw_proto = match.nw_proto)            
-                #rev_msg.out_port = s_lsps[best_path][2][i+1]
-                #log.debug("Installing Reverse from switch %s to switch %s : input port %s and output port %s", src_sw, dst_sw, rev_msg.match.in_port,  s_lsps[best_path][2][i+2])
-                #rev_msg.actions.append(of.ofp_action_output(port = s_lsps[best_path][2][i+1]))
-                #poxcore.openflow.sendToDPID(poxutil.str_to_dpid(cur_sw),rev_msg)
-        '''
-class NewFlow(Event):
-    def __init__(self, prev_path, match, rev_match):
-        Event.__init__(self)
-        self.match = match
-        self.prev_path = prev_path
-        self.rev_match = rev_match
-     
-    
-class Switch(EventMixin):
-    _eventMixin_events = set([
-                            NewFlow,
-                            ])
-    def __init__(self, connection, l3_matching=False):
-        self.connection = connection
-        self.l3_matching = l3_matching
-        connection.addListeners(self)
-        for p in self.connection.ports.itervalues(): #Enable flooding on all ports until they are classified as links
-            self.enable_flooding(p.port_no)
-    
-    def __repr__(self):
-        return poxutil.dpid_to_str(self.connection.dpid) 
-    
-    
-    def disable_flooding(self, port):
-        msg = of.ofp_port_mod(port_no = port,
-                        hw_addr = self.connection.ports[port].hw_addr,
-                        config = of.OFPPC_NO_FLOOD,
-                        mask = of.OFPPC_NO_FLOOD)
-    
-        self.connection.send(msg)
-    
-
-    def enable_flooding(self, port):
-        msg = of.ofp_port_mod(port_no = port,
-                            hw_addr = self.connection.ports[port].hw_addr,
-                            config = 0, # opposite of of.OFPPC_NO_FLOOD,
-                            mask = of.OFPPC_NO_FLOOD)
-    
-        self.connection.send(msg)
-    
-    def _handle_PacketIn(self, event):
-        def forward(port):
-            """Tell the switch to drop the packet"""
-            msg = of.ofp_packet_out()
-            msg.actions.append(of.ofp_action_output(port = port))    
-            if event.ofp.buffer_id is not None:
-                msg.buffer_id = event.ofp.buffer_id
-            else:
-                msg.data = event.ofp.data
-            msg.in_port = event.port
-            self.connection.send(msg)
-                
-        def flood():
-            """Tell all switches to flood the packet, remember that we disable inter-switch flooding at startup"""
-            #forward(of.OFPP_FLOOD)
-            for (dpid,switch) in switches.iteritems():
-                msg = of.ofp_packet_out()
-                if switch == self:
-                    if event.ofp.buffer_id is not None:
-                        msg.buffer_id = event.ofp.buffer_id
+                    if p not in pathIterator or pathIterator[p] == p.src:  # Round Robin switch selection
+                        pathIterator[p] = p.dst
                     else:
-                        msg.data = event.ofp.data
-                    msg.in_port = event.port
-                else:
-                    msg.data = event.ofp.data
-                ports = [p for p in switch.connection.ports if (dpid,p) not in switch_ports]
-                if len(ports) > 0:
-                    for p in ports:
-                        msg.actions.append(of.ofp_action_output(port = p))
-                    switches[dpid].connection.send(msg)
-                
-                
-        def drop():
-            """Tell the switch to drop the packet"""
-            if event.ofp.buffer_id is not None: #nothing to drop because the packet is not in the Switch buffer
+                        pathIterator[p] = p.prev[pathIterator[p]]
+
+                    curSwitch = pathIterator[p]
+
+                    # log.debug("Sending message to switch %s", util.dpid_to_str(curSwitch))
+                    msg = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+                    switches[curSwitch].connection.send(msg)
+                    msg2 = of.ofp_stats_request(body=of.ofp_port_stats_request())
+                    switches[curSwitch].connection.send(msg2)
+                    for pPrime in monitored_pathsBySwitch[
+                        curSwitch]:  # Circumvent polling multiple switches for paths from whom the stats have already been requested
+                        pathRead[pPrime] = True
+
+        def LastSwitch():
+            switchRead = {}
+            for dpid in switches:
+                switchRead[dpid] = False
+
+            for p in monitored_paths:  # Walk through all distinct paths and select both last and first switch to calculate throughput and packet loss.
+                if switchRead[p.dst] == False:
+                    switchRead[p.dst] = True
+                    msg = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+                    switches[p.dst].connection.send(msg)
+                    msg2 = of.ofp_stats_request(body=of.ofp_port_stats_request())
+                    switches[p.dst].connection.send(msg2)
+
+                if switchRead[p.src] == False:
+                    switchRead[p.src] = True
+                    msg = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+                    switches[p.src].connection.send(msg)
+                    msg2 = of.ofp_stats_request(body=of.ofp_port_stats_request())
+                    switches[p.src].connection.send(msg2)
+
+        def MonitorAll():
+            # log.debug("Port Stats Sending to Switch\n")
+
+            for con in core.openflow.connections:  # make this _connections.keys() for pre-betta
+                con.send(of.ofp_stats_request(body=of.ofp_port_stats_request()))
+
+        def MeasureDelay():
+            for p in monitored_paths:  # Walk through all distinct paths
+
+                ip_pck = pkt.ipv4(protocol=253,  # use for experiment and testing
+								  srcip=IPAddr(p.__hash__()),
+								  dstip=IPAddr("224.0.0.255"))
+
+                pl = Payload(id(p), time.time())
+
+                ip_pck.set_payload(repr(pl))
+
+                eth_packet = pkt.ethernet(
+                    type=pkt.ethernet.IP_TYPE)  # use something that does not interfer with regular traffic
+                eth_packet.src = struct.pack("!Q", p.src)[2:]  # convert dpid to EthAddr
+                eth_packet.dst = struct.pack("!Q", p.dst)[2:]
+                eth_packet.set_payload(ip_pck)
+
                 msg = of.ofp_packet_out()
-                msg.buffer_id = event.ofp.buffer_id 
-                event.ofp.buffer_id = None # Mark as dead, copied from James McCauley, not sure what it does but it does not work otherwise
-                msg.in_port = event.port
-                self.connection.send(msg)
-        
-        #log.debug("Received PacketIn")        
-        packet = event.parsed
-                
-        SwitchPort = namedtuple('SwitchPoint', 'dpid port')
-        
-        if (event.dpid,event.port) not in switch_ports:                        # only relearn locations if they arrived from non-interswitch links
-            mac_learning[packet.src] = SwitchPort(event.dpid, event.port)    #relearn the location of the mac-address
-        
-        if packet.effective_ethertype == packet.LLDP_TYPE:
-            drop()
-            #log.debug("Switch %s dropped LLDP packet", self)
-        elif packet.dst.is_multicast:
-            flood()
-            #log.debug("Switch %s flooded multicast 0x%0.4X type packet", self, packet.effective_ethertype)
-        elif packet.dst not in mac_learning:
-            flood() #Let's first learn the location of the recipient before generating and installing any rules for this. We might flood this but that leads to further complications if half way the flood through the network the path has been learned.
-            #log.debug("Switch %s flooded unicast 0x%0.4X type packet, due to unlearned MAC address", self, packet.effective_ethertype)
-        elif packet.effective_ethertype == packet.ARP_TYPE:
-            #These packets are sent so not-often that they don't deserve a flow
-            #Instead of flooding them, we drop it at the current switch and have it resend by the switch to which the recipient is connected.
-            #flood()
-            match = ofp_match_withHash.from_packet(packet)
-            log.debug("PrintARPSource%s",str(match.nw_src))
-            _install_arp(self.connection.dpid, match, event, packet.src,event.ofp.in_port)
-            '''
-            drop()
-            dst = mac_learning[packet.dst]
-            msg = of.ofp_packet_out()
-            msg.data = event.ofp.data
-            msg.actions.append(of.ofp_action_output(port = dst.port))
-            switches[dst.dpid].connection.send(msg)
-            
-            
-            dst = mac_learning[packet.dst]
-            log.debug("Switch %s processed unicast ARP (0x0806) packet, send to recipient by switch %s", self, poxutil.dpid_to_str(dst.dpid))
-            '''
-        else:
-            if packet.type == packet.IP_TYPE:
-                log.debug("Switch %s received PacketIn of type 0x%0.4X, received from %s.%s", self, packet.effective_ethertype, poxutil.dpid_to_str(event.dpid), event.port)
-                if packet.find("ipv4").srcip not in server_list and packet.find("ipv4").srcip not in client_list and packet.find("ipv4").srcip not in cross_list: 
-                    print (packet.find("ipv4").srcip)
-                if packet.find("ipv4").dstip not in server_list and packet.find("ipv4").dstip not in client_list and packet.find("ipv4").dstip not in cross_list:
-                    client_list.append(packet.find("ipv4").dstip)
-                    print (packet.find("ipv4").dstip)
-            dst = mac_learning[packet.dst]
+                msg.actions.append(of.ofp_action_output(port=p.first_port))
+                msg.data = eth_packet.pack()
+                switches[p.src].connection.send(msg)
 
-            if self.l3_matching == True: #only match on l2-properties, useful when doing experiments with UDP streams as you can insert a flow using ping and then start sending udp.
-            #if match.nw_src == "10.10.10.14" or match.nw_src== "10.10.10.2" or match.nw_src == "10.10.10.4" or match.nw_src == "10.10.10.6" or match.nw_src == "10.10.10.11" or match.nw_src == "10.10.10.7":    
-                match = ofp_match_withHash()
-                rev_match = ofp_match_withHash()
-                match.dl_src =rev_match.dl_dst = packet.src
-                match.dl_dst = rev_match.dl_src =  packet.dst
-                match.dl_type = rev_match.dl_type = packet.type
-                p = packet.next
-                if isinstance(p, vlan):
-                    match.dl_type = rev_match.dl_type = p.eth_type
-                    match.dl_vlan = rev_match.dl_vlan = p.id
-                    match.dl_vlan_pcp = rev_match.dl_vlan_pcp =p.pcp
-                    p = p.next
-                if isinstance(p, ipv4):
-                    match.nw_src = rev_match.nw_dst = p.srcip
-                    match.nw_dst = rev_match.nw_src = p.dstip
-                    match.nw_proto = rev_match.nw_proto = p.protocol
-                    match.nw_tos = rev_match.nw_tos = p.tos
-                    p = p.next
-                else:
-                    match.dl_vlan = rev_match.dl_vlan= of.OFP_VLAN_NONE
-                    match.dl_vlan_pcp = rev_match.dl_vlan = 0
-                log.debug("L3 packet MATCHED\n")
-                #_install_path(match, event)    
-                
-            else:
-                match = ofp_match_withHash.from_packet(packet)
-                rev_match = match
-                
-            
-            _install_path(self.connection.dpid, match, event, packet.src,event.ofp.in_port)
-            
-            #forward the packet directly from the last switch, there is no need to have the packet run through the complete network.
-            
-            drop()
-            dst = mac_learning[packet.dst]
-            msg = of.ofp_packet_out()
-            msg.data = event.ofp.data
-            msg.actions.append(of.ofp_action_output(port = dst.port))
-            #log.debug("Switch %s processed unicast 0x%0.4x type packet, send to recipient by switch %s", self, packet.effective_ethertype, poxutil.dpid_to_str(dst.dpid))
-            switches[dst.dpid].connection.send(msg)
-            #self.raiseEvent(NewFlow(rev_match, match, Path(msg.in_port, msg.out_port, , first_port)))
-            ##log.debug("Switch %s processed unicast 0x%0.4x type packet, send to recipient by switch %s", self, packet.effective_ethertype, poxutil.dpid_to_str(dst.dpid))
-            
-        
-    def _handle_ConnectionDown(self, event):
-        #log.debug("Switch %s going down", poxutil.dpid_to_str(self.connection.dpid))
-        del switches[self.connection.dpid]
-        #pprint(switches)
+                # msg2 = of.ofp_barrier_request()
+                # switches[p.src].connection.send(msg2)
+                # barrier[msg2.xid] = (p.src, time.time())
 
-        
-class NewSwitch(Event):
-    def __init__(self, switch):
-        Event.__init__(self)
-        self.switch = switch
+                # msg3 = of.ofp_barrier_request()
+                # switches[p.dst].connection.send(msg3)
+                # barrier[msg3.xid] = (p.src, time.time())
 
-class Forwarding(EventMixin):
-    _core_name = "opennetmon_forwarding" # we want to be poxcore.opennetmon_forwarding
-    _eventMixin_events = set([NewSwitch,])
-    
-    def __init__ (self, l3_matching):
-        #log.debug("Forwarding coming up")
-                
+                eth_packet = pkt.ethernet(type=pkt.ethernet.IP_TYPE)
+                eth_packet.src = struct.pack("!Q", p.src)[2:]
+                eth_packet.dst = struct.pack("!Q", p.src)[2:]
+                eth_packet.set_payload(ip_pck)
+
+                msg = of.ofp_packet_out()
+                msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+                msg.data = eth_packet.pack()
+                switches[p.src].connection.send(msg)
+
+        # AdaptiveTimer() #use to experiment with the adaptive timer)
+
+        # RoundRobin() #use to experiment with roundrobin switch selection
+        # LastSwitch() #use to experiment with lastswitch switch selection
+        MonitorAll()
+
+    # MeasureDelay() #sends packets for delay measurement
+
+    def __init__(self, postfix):
+        # log.debug("Monitoring coming up")
+
         def startup():
-            poxcore.openflow.addListeners(self)
-            poxcore.openflow_discovery.addListeners(self)
-            poxcore.openflow.miss_send_len = 65535
-            #log.debug("Forwarding started")
-        
-        self.l3_matching = l3_matching
-        poxcore.call_when_ready(startup, 'openflow', 'openflow_discovery')
-        
-            
-    def _handle_LinkEvent(self, event):
-        link = event.link
-        if event.added:
-            #log.debug("Received LinkEvent, Link Added from %s to %s over port %d", poxutil.dpid_to_str(link.dpid1), poxutil.dpid_to_str(link.dpid2), link.port1)
-            adj[link.dpid1][link.dpid2] = link.port1
-            switch_ports[link.dpid1,link.port1] = link
-            #switches[link.dpid1].disable_flooding(link.port1)
-            #pprint(adj)
+            core.openflow.addListeners(self,
+                                       priority=0xfffffffe)  # took 1 priority lower as the discovery module, although it should not matter
+
+            core.opennetmon_forwarding.addListeners(self)  # ("NewPath")
+
+            self.decreaseTimer = False
+            self.increaseTimer = False
+            self.t = Timer(1, self._timer_MonitorPaths, recurring=True)
+
+            self.f = open("output.%s.csv" % postfix, "w")
+            # self.f.write("Experiment,Switch,SRC_IP,DST_IP,SRC_PORT,DST_PORT,Packet_Count,Byte_Count,Duration_Sec,Duration_Nsec,Delta_Packet_Count,Delta_Byte_Count,Delta_Duration_Sec,Delta_Duration_Nsec\n")
+            # self.f.flush()
+            # self.f3 = open("/groups/ch-geni-net/GIMITesting/ports.%s.csv"%postfix, "w")
+            # self.f2 = open("delay.%s.csv"%postfix, "w")
+            # self.f2.write("MeasurementType,Src/Initiator,Dst/Switch,Delay\n")
+            # self.f2.flush()
+
+            self.experiment = postfix
+
+        # log.debug("Monitoring started")
+
+        core.call_when_ready(startup, ('opennetmon_forwarding'))  # Wait for opennetmon-forwarding to be started
+
+    def __del__(self):
+
+        self.f.close()
+
+    def _handle_NewSwitch(self, event):
+        switch = event.switch
+        # log.debug("New switch to Monitor %s", switch.connection)
+        switches[switch.connection.dpid] = switch
+        switch.addListeners(self)
+
+    # msg = of.ofp_stats_request(body=of.ofp_port_stats_request())
+    # switch.connection.send(msg)
+
+    def _handle_NewFlow(self, event):
+        match = event.match
+        '''
+		path = event.prev_path
+		adj = event.adj
+		##log.debug("New flow to monitor %s", str(match))
+		##log.debug(path._tuple_me())
+
+		_install_monitoring_path(path, adj)
+
+		if path not in monitored_paths:
+			monitored_paths[path] = set([match])
+			monitored_pathsById[id(path)] = path
+			sw = path.dst
+			while sw is not None:
+				if sw not in monitored_pathsBySwitch:
+					monitored_pathsBySwitch[sw] = set([path])
+				else:
+					monitored_pathsBySwitch[sw].add(path)
+				#pprint(monitored_pathsBySwitch[sw])
+				sw = path.prev[sw]
+		else:
+			monitored_paths[path].add(match)
+		#pprint(monitored_paths[path])
+
+		monitored_pathsByMatch[match] = path
+	'''
+
+    def _handle_FlowRemoved(self, event):
+        match = ofp_match_withHash.from_ofp_match_Superclass(event.ofp.match)
+        '''
+		path = monitored_pathsByMatch.pop(match, None)
+		if path is not None:
+			#log.debug("Removing flow")
+			monitored_paths[path].remove(match)
+			if not monitored_paths[path]:
+				del monitored_paths[path]
+				del monitored_pathsById[id(path)]
+				sw = path.dst
+
+				while sw is not None: 
+					monitored_pathsBySwitch[sw].remove(path)
+					if not monitored_pathsBySwitch[sw]:
+						del monitored_pathsBySwitch[sw]
+					#pprint(monitored_pathsBySwitch[sw])
+
+					sw = path.prev[sw]
+			#pprint(monitored_paths[path])
+		'''
+
+    def _handle_FlowStatsReceived(self, event):
+        # stats = flow_stats_to_list(event.stats)
+        ##log.debug("Received Flow Stats from %s: %s", util.dpid_to_str(event.connection.dpid), stats)
+        try:
+            client = pymongo.MongoClient("155.98.37.89")
+            print("Connected successfully!!!")
+        except pymongo.errors.ConnectionFailure as e:
+            print ("Could not connect to MongoDB: %s" % e)
+        # client
+        db = client.opencdn
+        table = db.netmonitor
+        dpid = event.connection.dpid
+        for stat in event.stats:
+            match = ofp_match_withHash.from_ofp_match_Superclass(stat.match)
+            if match.dl_type != pkt.ethernet.LLDP_TYPE and not (
+                    match.dl_type == pkt.ethernet.IP_TYPE and match.nw_proto == 253 and match.nw_dst == IPAddr(
+                    "224.0.0.255")):
+                if match not in prev_stats or dpid not in prev_stats[match]:
+                    prev_stats[match][dpid] = 0, 0, 0, 0, -1.0
+                prev_packet_count, prev_byte_count, prev_duration_sec, prev_duration_nsec, prev_throughput = \
+                prev_stats[match][dpid]
+
+                delta_packet_count = stat.packet_count - prev_packet_count
+                delta_byte_count = stat.byte_count - prev_byte_count
+                delta_duration_sec = stat.duration_sec - prev_duration_sec
+                delta_duration_nsec = stat.duration_nsec - prev_duration_nsec
+                if delta_duration_nsec > 0:
+                    cur_throughput = delta_byte_count / (delta_duration_sec + (delta_duration_nsec / 1000000000.0))
+
+                    ##log.debug("Stat switch: %s\tnw_src: %s\tnw_dst: %s\tnw_proto: %s\tpacketcount: %d\t bytecount: %d\t duration: %d s + %d ns\t, delta_packetcount: %d, delta_bytecount: %d, delta_duration: %d s + %d ns, throughput: %f", util.dpid_to_str(dpid), match.nw_src, match.nw_dst, match.nw_proto, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec, cur_throughput)
+                    self.f.write("%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%f\n" % (
+                    self.experiment, util.dpid_to_str(dpid), match.nw_src, match.nw_dst, match.nw_proto,
+                    stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count,
+                    delta_byte_count, delta_duration_sec, delta_duration_nsec, cur_throughput))
+                    post = {"exp_id": self.experiment, "dpid": util.dpid_to_str(dpid), "srcip": str(match.nw_src),
+                            "dstip": str(match.nw_dst), "pkttype": str(match.nw_proto), "pktcount": stat.packet_count,
+                            "bytecount": stat.byte_count, "duration": stat.duration_sec, "delpkt": delta_packet_count,
+                            "delbytecount": delta_byte_count, "delduration": delta_duration_sec,
+                            "throughput": cur_throughput, "date": datetime.utcnow()}
+                    # posts = table
+                    post_id = table.insert_one(post).inserted_id
+                    self.f.flush()
+                    prev_stats[match][
+                        dpid] = stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, cur_throughput
+                # influence the timer by inspecting the change in throughput
+                if abs(cur_throughput - prev_throughput) > .05 * prev_throughput:
+                    self.decreaseTimer = False
+                if abs(cur_throughput - prev_throughput) > .20 * prev_throughput:
+                    self.increaseTimer = True
+
+        ##log.debug("Stat switch: %s\tdl_type: %d\tnw_src: %s\tnw_dst: %s\tproto: %s\tsrc_port: %s\t dst_port: %s\tpacketcount: %d\t bytecount: %d\t duration: %d s + %d ns, delta_packetcount: %d, delta_bytecount: %d, delta_duration: %d s + %d ns", util.dpid_to_str(dpid), match.dl_type, match.nw_src, match.nw_dst, match.nw_proto, match.tp_src, match.tp_dst, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec)
+        # self.f.write("%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"%(self.experiment, util.dpid_to_str(dpid), match.nw_src, match.nw_dst, match.tp_src, match.tp_dst, stat.packet_count, stat.byte_count, stat.duration_sec, stat.duration_nsec, delta_packet_count, delta_byte_count, delta_duration_sec, delta_duration_nsec))
+
+    '''
+	This event handler pushes the collected port statistics from all switches in the hetwork into the MongoDB archival system
+	'''
+
+    def _handle_PortStatsReceived(self, event):
+        dpid = event.connection.dpid
+        try:
+            client = pymongo.MongoClient("155.98.37.89")
+            print
+            "Connected successfully!!!"
+        except pymongo.errors.ConnectionFailure as e:
+            print("Could not connect to MongoDB: %s" % e)
+        db = client.opencdn
+        table_port = db.portmonitor
+        for stat in event.stats:
+
+            # match = ofp_match_withHash.from_ofp_match_Superclass(stat.match)
+            if stat.port_no != 65535:
+                # match = ofp_match_withHash.from_ofp_match_Superclass(stat.match)
+                # if match.dl_type != pkt.ethernet.LLDP_TYPE and not (match.dl_type == pkt.ethernet.IP_TYPE and match.nw_proto == 253 and match.nw_dst == IPAddr("224.0.0.255")):
+                stats = flow_stats_to_list(event.stats)
+                ##log.debug("PortStatsReceived from %s: %s\n", dpidToStr(event.connection.dpid), stats)
+                if dpid not in prev_stats or stat.port_no not in prev_stats[dpid]:
+                    prev_stats[dpid][stat.port_no] = 0, 0, 0, 0
+                prev_rx_packet, prev_rx_bytes, prev_tx_packet, prev_tx_bytes = prev_stats[dpid][stat.port_no]
+
+                delta_rx_packet = stat.rx_packets - prev_rx_packet
+                delta_rx_bytes = stat.rx_bytes - prev_rx_bytes
+                delta_tx_packet = stat.tx_packets - prev_tx_packet
+                delta_tx_bytes = stat.tx_bytes - prev_tx_bytes
+
+                # self.f3.write("PortStatsReceived from %s: %s \t %s \t %s\n"%(dpidToStr(event.connection.dpid), stats, str(delta_rx_packet),str(delta_tx_bytes) ))
+                log.debug("Monitoring_Called Statistics\n")
+                post = {"exp_id": self.experiment, "dpid": dpidToStr(event.connection.dpid),
+                        "RXpackets": str(delta_rx_packet), "RXbytes": str(delta_rx_bytes),
+                        "TXpackets": str(delta_tx_packet), "TXbytes": str(delta_tx_bytes), "portno": stat.port_no,
+                        "date": datetime.utcnow()}
+                post_id = table_port.insert_one(post).inserted_id
+                # self.f3.flush()
+                prev_stats[dpid][stat.port_no] = stat.rx_bytes, stat.rx_bytes, stat.tx_packets, stat.tx_bytes
+
+    def _handle_BarrierIn(self, event):
+        timeRecv = time.time()
+        dpid = event.dpid
+        xid = event.xid
+        if xid not in barrier:
+            return
+
+        (initiator, prevTime) = barrier[xid]
+        # log.debug("Delay from switch %s initiated by %s = %f"%(util.dpid_to_str(dpid), util.dpid_to_str(initiator), timeRecv - prevTime))
+        self.f2.write("Switch,%s,%s,%f\n" % (util.dpid_to_str(initiator), util.dpid_to_str(dpid), timeRecv - prevTime))
+        self.f2.flush()
+        del barrier[xid]
+        return EventHalt
+
+    def _handle_PacketIn(self, event):
+        ##log.debug("Incoming packet")
+        timeRecv = time.time()
+        packet = event.parsed
+        if packet.effective_ethertype != pkt.ethernet.IP_TYPE:
+            return
+        ip_pck = packet.find(pkt.ipv4)
+        if ip_pck is None or not ip_pck.parsed:
+            log.error("No IP packet in IP_TYPE packet")
+            return EventHalt
+
+        if ip_pck.protocol != 253 or ip_pck.dstip != IPAddr("224.0.0.255"):
+            ##log.debug("Packet is not ours, give packet back to regular packet manager")
+            return
         else:
-            log.debug("Received LinkEvent, Link Removed from %s to %s over port %d", poxutil.dpid_to_str(link.dpid1), poxutil.dpid_to_str(link.dpid2), link.port1)
-            ##Disabled those two lines to prevent interference with experiment due to falsely identified disconnected links.
-            #del adj[link.dpid1][link.dpid2]
-            #del switch_ports[link.dpid1,link.port1]
-            
-            
-            #switches[link.dpid1].enable_flooding(link.port1)
-            
-        
-        self._calc_ForwardingMatrix()
-        
-    def _calc_ForwardingMatrix(self):
-        print("Calculating forwarding matrix")
-        
-    def _handle_ConnectionUp(self, event):
-        sw = Switch(event.connection, l3_matching=self.l3_matching)
-        switches[event.dpid] = sw;
-        self.raiseEvent(NewSwitch(sw))
-        #log.debug("New switch connection: %s", event.connection)
+            ##log.debug("Received monitoring packet, with payload %s."%(ip_pck.payload))
+            payload = eval(ip_pck.payload)
 
-def create_matrix ():
-    log.debug("Child process called\n-------------------")
-    #_forward_path
-    time.sleep(5)
-    t = Timer(2.0, _forward_path, recurring=True)
-    #t = threading.Timer(5.0, _forward_path)
-    #threads.append(t)
-    #t.daemon = True
-    t.start()
-    time.sleep(5)
-    #return 0
+            # log.debug("Delay from switch %s to %s = %f"%(EthAddr(packet.src), EthAddr(packet.dst), timeRecv - payload.timeSent ))
+            self.f2.write("Path,%s,%s,%f\n" % (EthAddr(packet.src), EthAddr(packet.dst), timeRecv - payload.timeSent))
+            self.f2.flush()
+            return EventHalt
 
-        
-def launch (l3_matching=False):
-    #threads =[]
-    
-    poxcore.registerNew(Forwarding, l3_matching)
-    
-    #time.sleep(10)
-    #post2=gen_random_qual()
-    print ("Calling Timer\n")
-    #t = Timer(5.0, _forward_path, recurring=True)
-    #t.daemon = True
-    #t.start()
-    #t.start()
-    #thread.start_new_thread(create_matrix, ())
-    #poxcore.registerNew(create_matrix)
-    '''
-    t=Timer(5.0, _forward_path, recurring=True)
-    t.daemon = True
-    t.start()
-    '''
-    '''
-    p = Process(name='daemon', target=create_matrix)
-    p.daemon = True
-    p.start()
-    #p.join()
-    '''    
-    #t = threading.Timer(5.0, _forward_path)
-    #threads.append(t)
-    #t.daemon = True
-    #t.start()
-    
-  
+
+def launch(postfix=datetime.now().strftime("%Y%m%d%H%M%S")):
+    """
+	Starts the component
+	"""
+    core.registerNew(Monitoring, postfix)
