@@ -59,8 +59,8 @@ from rpy2.robjects.vectors import IntVector, FloatVector
 switches = {}
 switch_ports = {}
 
-switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
-               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
+switch_dpid = ["a2-35-e4-dc-4e-4e","92-2d-43-a4-ff-43", "d6-3e-77-3a-a6-40",
+               "16-03-02-d2-56-42","82-7a-01-c4-38-46","aa-7d-1c-f0-02-40","2e-44-7a-69-f6-43","0e-e7-e9-13-f2-45","12-da-20-28-9e-49"]
 ct_called = False
 
 s_keys = []
@@ -247,8 +247,7 @@ def _forward_path():
     # print("TRAFFIC_MATRIX \n")
     for i in range(len(s_keys)):
         for j in range(len(s_keys[i])):
-            print
-            s_keys[i][j]
+            print (s_keys[i][j])
             min_bw = 0.0
             for k in range(3, len(s_lsps[s_keys[i][j]][2]) - 2, 3):
                 sum_bw = 0.0
@@ -395,10 +394,8 @@ def get_cache_content(cache_ip_addr):
         content_id = video_id + "-" + str(cache_entry["seg_no"])
         cache_occ[content_id].append(int(cache_entry["qual_no"]))
     if table.find_one() is not None:
-        print
-        cache_ip_addr
-        print
-        cache_occ[content_id]
+        print(cache_ip_addr)
+        print(cache_occ[content_id])
         # cache_occ[content_id].append(int(cache_entry["qual_no"])+1)
     return cache_occ
 
