@@ -63,8 +63,8 @@ barrier = {}
 '''
 The following contains the list of DPIDs for all switches in the network
 '''
-switch_dpid = ["06-35-de-b8-bd-44","a2-07-80-ad-e5-4a", "92-34-29-d0-38-49",
-               "96-b9-07-8f-b1-4c","52-f6-0b-0e-ef-4a","4e-a2-77-62-10-4c","0e-68-33-2e-6c-40","9e-2f-3a-c2-a4-4f","ae-6e-f5-36-c8-41"]
+switch_dpid = ["a2-35-e4-dc-4e-4e","92-2d-43-a4-ff-43", "d6-3e-77-3a-a6-40",
+               "16-03-02-d2-56-42","82-7a-01-c4-38-46","aa-7d-1c-f0-02-40","2e-44-7a-69-f6-43","0e-e7-e9-13-f2-45","12-da-20-28-9e-49"]
 
 
 prev_stats = defaultdict(lambda: defaultdict(lambda: None))
@@ -331,8 +331,7 @@ class Monitoring(object):
         ##log.debug("Received Flow Stats from %s: %s", util.dpid_to_str(event.connection.dpid), stats)
         try:
             client = pymongo.MongoClient("155.98.37.89")
-            print
-            "Connected successfully!!!"
+            print("Connected successfully!!!")
         except pymongo.errors.ConnectionFailure as e:
             print ("Could not connect to MongoDB: %s" % e)
         # client
