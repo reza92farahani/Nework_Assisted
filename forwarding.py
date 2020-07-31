@@ -60,7 +60,7 @@ switch_ports = {}
 The following contains the list of DPIDs for all switches in the network
 
 '''
-switch_dpid = ["a2-35-e4-dc-4e-4e","92-2d-43-a4-ff-43", "d6-3e-77-3a-a6-40",
+switch_dpid = ["a2-35-e4-dc-4e-4e","ae-4b-67-78-e8-48", "d6-3e-77-3a-a6-40",
                "16-03-02-d2-56-42","82-7a-01-c4-38-46","aa-7d-1c-f0-02-40","2e-44-7a-69-f6-43","0e-e7-e9-13-f2-45","12-da-20-28-9e-49"]
 ct_called = False
 
